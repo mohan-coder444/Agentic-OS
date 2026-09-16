@@ -1,0 +1,72 @@
+version: "3.8"
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ./backend
+      dockerfile: ./gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: ./backend/gateway/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - AUTH_SERVICE_URL=http://auth:8001
+      - CHAT_SERVICE_URL=http://chat:8002
+      - AGENT_SERVICE_URL=http://agent:8003
+    depends_on:
+      - redis
+      - auth
+      - chat
+      - agent
+    restart: unless-stopped
+
+  auth:
+    build:
+      context: ./backend
+      dockerfile: ./services/auth/Dockerfile
+    ports:
+      - "8001:8001"
+    env_file: ./backend/services/auth/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  chat:
+    build:
+      context: ./backend
+      dockerfile: ./services/chat/Dockerfile
+    ports:
+      - "8002:8002"
+    env_file: ./backend/services/chat/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: ./backend
+      dockerfile: ./services/agent/Dockerfile
+    ports:
+      - "8003:8003"
+    env_file: ./backend/services/agent/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - CHAT_SERVICE_URL=http://chat:8002
+    depends_on:
+      - redis
+      - chat
+    restart: unless-stopped
+
+volumes:
+  redis_data:

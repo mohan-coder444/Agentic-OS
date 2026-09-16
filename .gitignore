@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Secrets / local env
+.env
+*.env
+serviceAccountKey.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build output
+dist/
+build/
+
+# Runtime upload scratch dir (multer)
+backend/services/agent/config/temp/
+
+# OS junk
+.DS_Store
+Thumbs.db

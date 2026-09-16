@@ -1,0 +1,32 @@
+{
+  "name": "agent",
+  "version": "1.0.0",
+  "description": "Agent microservice for Cortex AI (LangGraph + 6 agents)",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1121.0",
+    "@langchain/core": "^1.2.9",
+    "@langchain/openai": "^1.5.11",
+    "@mistralai/mistralai": "^2.6.4",
+    "axios": "^1.20.0",
+    "chromadb": "^3.5.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "groq-sdk": "^1.6.0",
+    "jsonwebtoken": "^9.0.3",
+    "langchain": "^1.5.10",
+    "mongoose": "^9.9.4",
+    "morgan": "^1.11.0",
+    "multer": "^2.3.0",
+    "nodemon": "^3.1.14",
+    "openai": "^7.9.0",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5",
+    "pptxgenjs": "^4.0.1"
+  }
+}

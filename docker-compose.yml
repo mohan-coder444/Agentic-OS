@@ -20,6 +20,10 @@ services:
       - AUTH_SERVICE_URL=http://auth:8001
       - CHAT_SERVICE_URL=http://chat:8002
       - AGENT_SERVICE_URL=http://agent:8003
+      # Comma-separated CORS allowlist. Default keeps local dev working; add the
+      # deployed frontend origin to serve both at once, e.g.
+      #   FRONTEND_URLS=http://localhost:5173,https://your-app.vercel.app
+      - FRONTEND_URLS=${FRONTEND_URLS:-http://localhost:5173}
     depends_on:
       - redis
       - auth
@@ -34,8 +38,19 @@ services:
     ports:
       - "8001:8001"
     env_file: ./backend/services/auth/.env
+    volumes:
+      # Firebase service account key is mounted at runtime, never COPYed into the
+      # image (backend/.dockerignore excludes it). Keeping it out of image layers
+      # matters because a baked-in secret survives even a later `rm` and would
+      # ship to anyone who pulls the image. Read-only: the app only reads it.
+      - ./backend/services/auth/serviceAccountKey.json:/app/serviceAccountKey.json:ro
     environment:
       - REDIS_URL=redis://redis:6379
+      # Set true ONLY when the frontend is on a different site than the API
+      # (e.g. vercel.app -> trycloudflare.com). Emits sameSite=none; Secure,
+      # which browsers require for cross-site cookies but which also demands
+      # HTTPS on both ends. Leave false for localhost development.
+      - CROSS_SITE_COOKIES=${CROSS_SITE_COOKIES:-false}
     depends_on:
       - redis
     restart: unless-stopped

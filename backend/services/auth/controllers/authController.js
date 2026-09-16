@@ -1,8 +1,7 @@
 import { admin, getAuth } from "../config/firebase.js";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
-
-const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days, in seconds
+import { sessionCookieOptions, clearCookieOptions, SESSION_TTL } from "../config/cookies.js";
 
 // POST /google  (reachable as /auth/google through the gateway)
 // Body: { idToken }  — the Google ID token from "Continue with Google" on the frontend
@@ -40,12 +39,7 @@ export const googleLogin = async (req, res) => {
       { expiresIn: SESSION_TTL }
     );
 
-    res.cookie("sessionId", sessionJwt, {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax", // allow cross-port localhost:5173 -> 8000 (strict blocks XHR)
-      maxAge: SESSION_TTL * 1000,
-    });
+    res.cookie("sessionId", sessionJwt, sessionCookieOptions());
 
     res.status(200).json({ user });
   } catch (err) {
@@ -57,7 +51,7 @@ export const googleLogin = async (req, res) => {
 // POST /logout  (reachable as /auth/logout) — clears the session + cookie
 export const logout = async (req, res) => {
   try {
-    res.clearCookie("sessionId", { sameSite: "lax", secure: false });
+    res.clearCookie("sessionId", clearCookieOptions());
     res.status(200).json({ message: "Logged out" });
   } catch (err) {
     console.log("logout error:", err.message);

@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import connectDB from "./config/connectDB.js";
 import "./config/firebase.js";
 import authRoutes from "./routes/auth.js"; // initializes Firebase admin at startup (logs if key missing)
+import { logCookieMode } from "./config/cookies.js";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -23,5 +24,6 @@ app.use("/", authRoutes);
 
 app.listen(port, async () => {
   console.log(`auth started at ${port}`);
+  logCookieMode();
   await connectDB();
 });

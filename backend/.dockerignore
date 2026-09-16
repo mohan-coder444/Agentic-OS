@@ -1,0 +1,29 @@
+# Dependencies get installed inside the image, never copied from host
+node_modules/
+**/node_modules/
+
+# Secrets never enter the image (leak into layers). Runtime envs come from
+# docker-compose or the deploy platform, not baked in.
+.env
+**/.env
+!.env.example
+**/*.env.local
+**/serviceAccountKey.json
+
+# Local build/dev noise
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Multer scratch dir - user uploads, not code
+services/agent/config/temp/
+
+# Test scaffolding I create ad-hoc during dev
+**/test_*.js
+**/_test_*.js
+**/_test_*.mjs
+
+# Version control noise
+.git
+.gitignore

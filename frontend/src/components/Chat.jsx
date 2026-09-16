@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import CodePreview from "./CodePreview";
 import ArtifactPanel from "./ArtifactPanel";
+import LoadingAnimation from "./LoadingAnimation";
 import api from "../axios";
 import {
   setConversations,
@@ -106,8 +107,15 @@ export default function Chat() {
       }
     } catch (e) {
       console.error("agent error:", e);
+      // Surface the server's message (rate limit, auth, upstream failure) instead
+      // of a generic "agent unavailable" — users need to know when to retry.
+      const serverMsg = e.response?.data?.message;
+      const status = e.response?.status;
+      const resetIn = e.response?.data?.resetIn;
+      let text = serverMsg || "Error: agent unavailable. Check console.";
+      if (status === 429 && resetIn) text = `${serverMsg} (wait ${resetIn}s)`;
       const userMsg = { _id: `u-${Date.now()}`, role: "user", content };
-      const assistantMsg = { _id: `a-${Date.now() + 1}`, role: "assistant", content: "Error: agent unavailable. Check console." };
+      const assistantMsg = { _id: `a-${Date.now() + 1}`, role: "assistant", content: text };
       dispatch(addMessages({ conversationId: activeId, userMsg, assistantMsg }));
     } finally {
       setSending(false);
@@ -343,23 +351,8 @@ export default function Chat() {
                   );
                 })
               )}
-              {/* Thinking indicator — shown until the agent responds */}
-              {sending && (
-                <div className="mr-auto max-w-[85%]" role="status" aria-live="polite" aria-label="Generating response">
-                  <div className="rounded-2xl px-4 py-3 bg-zinc-800 inline-flex items-center gap-2">
-                    <span className="flex items-center gap-1" aria-hidden="true">
-                      {[0, 150, 300].map((d) => (
-                        <span
-                          key={d}
-                          className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-bounce"
-                          style={{ animationDelay: `${d}ms` }}
-                        />
-                      ))}
-                    </span>
-                    <span className="text-xs text-slate-500">Thinking...</span>
-                  </div>
-                </div>
-              )}
+              {/* Multi-phase loader — shown until the agent responds */}
+              {sending && <LoadingAnimation />}
             </div>
             {/* Agent Selector — Hour 10 */}
             <div className="px-3 pt-3 flex flex-wrap gap-2">

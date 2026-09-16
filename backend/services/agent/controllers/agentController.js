@@ -2,6 +2,7 @@ import { graph } from "../graph/graph.js";
 import jwt from "jsonwebtoken";
 import axios from "axios";
 import { getMemory, addMessage } from "../config/memory.js";
+import { checkAgentLimit } from "../config/agentLimits.js";
 
 async function getUser(req) {
   const headerUserId = req.headers["x-user-id"];
@@ -20,6 +21,22 @@ export const runAgent = async (req, res) => {
   if (!user) return res.status(401).json({ message: "Not authenticated" });
   const { prompt, conversationId, agent, fileName, fileType } = req.body;
   if (!prompt) return res.status(400).json({ message: "prompt is required" });
+  // Rate limit on the requested agent. "auto" falls into the chat bucket —
+  // generous (20/min) and avoids charging users for routing decisions.
+  try {
+    const limitAgent = agent && agent !== "auto" ? agent.toLowerCase() : "chat";
+    await checkAgentLimit(limitAgent, user.userId);
+  } catch (err) {
+    if (err.status === 429) {
+      return res.status(429).json({
+        message: err.message,
+        resetIn: err.resetIn,
+        agent: err.agent,
+        limit: err.limit,
+      });
+    }
+    console.warn("[agent] rate limit check failed, allowing request:", err.message);
+  }
   try {
     // Save user msg to chat DB (for persistence) + to Redis memory (for LLM history)
     if (conversationId) {

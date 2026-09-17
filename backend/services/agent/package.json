@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1121.0",
+    "@langchain/aws": "^1.4.5",
     "@langchain/core": "^1.2.9",
     "@langchain/openai": "^1.5.11",
     "@mistralai/mistralai": "^2.6.4",

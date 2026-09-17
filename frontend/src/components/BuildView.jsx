@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSelector, useDispatch } from "react-redux";
 import Editor from "@monaco-editor/react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -11,42 +12,92 @@ import {
   FiMonitor,
   FiSmartphone,
   FiTablet,
+  FiChevronDown,
 } from "react-icons/fi";
 import api from "../axios";
 import LoadingAnimation from "./LoadingAnimation";
+import {
+  setModels,
+  setSelectedModel,
+  addBuild,
+  cacheBuild,
+  setActiveBuildId,
+} from "../slices/builderSlice";
 
 /**
  * BuildView — Antigravity-style IDE for the coding agent.
  *
- * Layout: preview on the left, Monaco editor + file tabs on the right, prompt
- * input pinned to the bottom. The whole panel is one artifact at a time; each
- * "Generate" replaces the previous project. History is not persisted yet —
- * that's a future feature (would need a new Mongo model + list UI).
+ * Layout: preview left, Monaco editor + file tabs right, prompt input pinned
+ * to the bottom, model dropdown in the top bar. Sidebar (in Chat.jsx) shows
+ * saved sessions when Build view is active.
+ *
+ * State is Redux-backed via builderSlice so switching sidebar sessions
+ * survives view toggles and reloads.
  */
 export default function BuildView() {
+  const dispatch = useDispatch();
+  const { models, selectedModel, activeBuildId, buildsById } = useSelector((s) => s.builder);
+
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
-  const [artifact, setArtifact] = useState(null); // { id, type, files: [{name, content}] }
   const [activeIdx, setActiveIdx] = useState(0);
   const [tab, setTab] = useState("preview"); // preview | code
-  const [device, setDevice] = useState("desktop"); // desktop | tablet | mobile
-  const [previewKey, setPreviewKey] = useState(0); // bump to force iframe reload
+  const [device, setDevice] = useState("desktop");
+  const [previewKey, setPreviewKey] = useState(0);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const inputRef = useRef(null);
+  const modelMenuRef = useRef(null);
 
+  // The active artifact comes from the cache. `null` means empty state.
+  const artifact = activeBuildId ? buildsById[activeBuildId] : null;
   const files = artifact?.files || [];
   const activeFile = files[activeIdx];
 
-  // Assemble the preview doc from whichever files exist. Supports both
-  // multi-file (html + css + js separate) and single-file HTML outputs.
+  // Fetch model list once on mount. Cached in Redux so switching views
+  // doesn't refetch.
+  useEffect(() => {
+    if (models.length > 0) return;
+    api
+      .get("/agent/models")
+      .then((r) => dispatch(setModels(r.data.models || [])))
+      .catch((e) => console.warn("failed to load models:", e.message));
+  }, [dispatch, models.length]);
+
+  // If activeBuildId is set but we don't have its files cached, fetch.
+  // Happens when the user clicks a session in the sidebar list.
+  useEffect(() => {
+    if (!activeBuildId) return;
+    if (buildsById[activeBuildId]?.files) return;
+    api
+      .get(`/chat/builds/${activeBuildId}`)
+      .then((r) => {
+        dispatch(cacheBuild(r.data.build));
+        setActiveIdx(0);
+        setTab("preview");
+        setPreviewKey((k) => k + 1);
+      })
+      .catch((e) => console.warn("failed to load build:", e.message));
+  }, [activeBuildId, buildsById, dispatch]);
+
+  // Close model dropdown on outside click.
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    const onClick = (e) => {
+      if (modelMenuRef.current && !modelMenuRef.current.contains(e.target)) {
+        setModelMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [modelMenuOpen]);
+
+  // Preview doc: multi-file (html+css+js) or single-file HTML.
   const previewDoc = useMemo(() => {
     if (!files.length) return "";
     const html = files.find((f) => f.name === "index.html")?.content || "";
     const css = files.find((f) => f.name === "style.css")?.content || "";
     const js = files.find((f) => f.name === "script.js")?.content || "";
-    // Single-file HTML case: css + js empty, html has everything inline.
     if (!css && !js) return html;
-    // Multi-file: inject css into <head> and js before </body>.
-    // If html has its own <head>/<body>, insert into them; else build a doc.
     if (/<html[\s>]/i.test(html)) {
       return html
         .replace(/<\/head>/i, `<style>${css}</style></head>`)
@@ -55,23 +106,53 @@ export default function BuildView() {
     return `<!DOCTYPE html><html><head><style>${css}</style></head><body>${html}<script>${js}</script></body></html>`;
   }, [files]);
 
+  const currentModel = models.find((m) => m.id === selectedModel) || models[0];
+
   const handleGenerate = async () => {
     if (!prompt.trim() || sending) return;
     const request = prompt.trim();
     setPrompt("");
     setSending(true);
     try {
-      // Coding agent is dispatched directly (no conversation persistence).
-      const res = await api.post("/agent/run", { prompt: request, agent: "coding" });
+      const res = await api.post("/agent/run", {
+        prompt: request,
+        agent: "coding",
+        model: selectedModel,
+      });
       const gen = res.data.artifacts?.[0];
-      if (gen && gen.files?.length) {
-        setArtifact(gen);
+      const buildId = res.data.buildId;
+      if (gen && gen.files?.length && buildId) {
+        // Fresh generation was auto-saved server-side. Add to Redux + activate.
+        dispatch(
+          addBuild({
+            _id: buildId,
+            title: request.slice(0, 60),
+            prompt: request,
+            modelUsed: gen.modelUsed || selectedModel,
+            files: gen.files,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          })
+        );
+        setActiveIdx(0);
+        setTab("preview");
+        setPreviewKey((k) => k + 1);
+      } else if (gen && gen.files?.length) {
+        // Save failed server-side but generation worked. Show ephemerally.
+        dispatch(
+          addBuild({
+            _id: `local-${Date.now()}`,
+            title: request.slice(0, 60),
+            prompt: request,
+            modelUsed: gen.modelUsed || selectedModel,
+            files: gen.files,
+            _ephemeral: true,
+          })
+        );
         setActiveIdx(0);
         setTab("preview");
         setPreviewKey((k) => k + 1);
       } else {
-        // Agent responded but no files came back — surface the text so the
-        // user isn't left staring at an unchanged empty state.
         alert(res.data.aiResponse || "No code generated. Try being more specific about what you want.");
       }
     } catch (err) {
@@ -85,12 +166,11 @@ export default function BuildView() {
   };
 
   const handleDownload = () => {
-    // Bundle all files into a single .html when possible, else download each.
+    if (!files.length) return;
     if (files.length === 1) {
       downloadBlob(files[0].content, files[0].name, mimeFor(files[0].name));
       return;
     }
-    // Multi-file: emit a single self-contained HTML so users can open it directly.
     const html = files.find((f) => f.name === "index.html")?.content || "";
     const css = files.find((f) => f.name === "style.css")?.content || "";
     const js = files.find((f) => f.name === "script.js")?.content || "";
@@ -120,6 +200,44 @@ export default function BuildView() {
           {artifact ? `${files.length} file${files.length === 1 ? "" : "s"}` : "AI website builder"}
         </span>
 
+        {/* Model picker */}
+        <div className="relative" ref={modelMenuRef}>
+          <button
+            onClick={() => setModelMenuOpen((v) => !v)}
+            className="flex items-center gap-1.5 px-2.5 h-7 text-[11px] font-medium rounded-md text-slate-200 bg-white/[0.04] border border-white/10 hover:bg-white/[0.08] transition-colors cursor-pointer"
+            title="Choose model"
+          >
+            <FiZap size={11} className="text-indigo-400" />
+            {currentModel?.label || "Model"}
+            <FiChevronDown size={11} />
+          </button>
+          {modelMenuOpen && models.length > 0 && (
+            <div className="absolute right-0 top-9 z-30 w-64 rounded-lg bg-zinc-900 border border-white/10 shadow-2xl py-1 max-h-96 overflow-auto">
+              {models.map((m) => {
+                const isActive = m.id === selectedModel;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => {
+                      dispatch(setSelectedModel(m.id));
+                      setModelMenuOpen(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 text-[11px] transition-colors cursor-pointer border-none bg-transparent ${
+                      isActive ? "bg-indigo-600/20 text-white" : "text-slate-300 hover:bg-white/[0.04]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{m.label}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${tierColor(m.tier)}`}>{m.tier}</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">{m.description}</div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Preview/Code tab switch */}
         {artifact && (
           <div className="flex items-center gap-0.5 bg-white/[0.04] rounded-lg p-0.5 border border-white/10">
@@ -133,8 +251,8 @@ export default function BuildView() {
                 <button
                   key={t.id}
                   onClick={() => setTab(t.id)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors ${
-                    isActive ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
+                  className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors cursor-pointer border-none ${
+                    isActive ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200 bg-transparent"
                   }`}
                 >
                   <Icon size={11} /> {t.label}
@@ -144,7 +262,6 @@ export default function BuildView() {
           </div>
         )}
 
-        {/* Device switch — only visible on preview tab */}
         {artifact && tab === "preview" && (
           <div className="flex items-center gap-0.5 bg-white/[0.04] rounded-lg p-0.5 border border-white/10">
             {[
@@ -159,8 +276,8 @@ export default function BuildView() {
                   key={d.id}
                   onClick={() => setDevice(d.id)}
                   title={d.label}
-                  className={`p-1.5 rounded-md transition-colors ${
-                    isActive ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
+                  className={`p-1.5 rounded-md transition-colors cursor-pointer border-none ${
+                    isActive ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200 bg-transparent"
                   }`}
                 >
                   <Icon size={12} />
@@ -190,7 +307,6 @@ export default function BuildView() {
         )}
       </div>
 
-      {/* Body: preview or code, plus sidebar file list when in code mode */}
       <div className="flex-1 flex overflow-hidden min-h-0">
         {!artifact && !sending && (
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 text-center">
@@ -199,7 +315,7 @@ export default function BuildView() {
             </div>
             <h2 className="text-xl font-bold text-white">Build a website</h2>
             <p className="text-sm text-slate-400 max-w-md">
-              Describe what you want. The AI generates a full single-page site with real content, custom design, and working code. Preview it here, tweak with follow-up prompts, download when ready.
+              Describe what you want. The AI generates a full single-page site with real content, custom design, and working code. Pick a model, preview it here, tweak with follow-up prompts, download when ready.
             </p>
             <div className="flex flex-wrap justify-center gap-2 mt-2 max-w-xl">
               {[
@@ -255,7 +371,7 @@ export default function BuildView() {
                   <button
                     key={f.name}
                     onClick={() => setActiveIdx(idx)}
-                    className={`px-4 py-2 text-[11px] font-medium whitespace-nowrap border-r border-white/5 relative bg-transparent cursor-pointer ${
+                    className={`px-4 py-2 text-[11px] font-medium whitespace-nowrap border-r border-white/5 relative bg-transparent cursor-pointer border-none ${
                       isActive ? "text-white" : "text-slate-500 hover:text-slate-300"
                     }`}
                   >
@@ -284,8 +400,6 @@ export default function BuildView() {
         )}
       </div>
 
-      {/* Prompt input pinned to bottom. Also shows the loader over an existing
-          artifact so the user knows the next generation is running. */}
       <div className="p-3 border-t border-white/5 shrink-0">
         <AnimatePresence>
           {sending && artifact && (
@@ -320,23 +434,49 @@ export default function BuildView() {
             disabled={sending}
             style={{ scrollbarWidth: "none" }}
           />
-          <div className="flex items-center justify-end">
-            <button
-              onClick={handleGenerate}
-              disabled={sending || !prompt.trim()}
-              className={`flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-medium border-none cursor-pointer transition-all ${
-                prompt.trim() && !sending
-                  ? "bg-gradient-to-br from-indigo-500 to-violet-700 text-white hover:opacity-90"
-                  : "bg-zinc-800 text-zinc-600"
-              } disabled:opacity-50`}
-            >
-              <FiSend size={13} /> {artifact ? "Regenerate" : "Generate"}
-            </button>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] text-slate-500">
+              Model: <span className="text-slate-300">{currentModel?.label || "Auto"}</span>
+            </span>
+            <div className="flex items-center gap-2">
+              {artifact && (
+                <button
+                  onClick={() => {
+                    dispatch(setActiveBuildId(null));
+                    inputRef.current?.focus();
+                  }}
+                  className="text-[11px] text-slate-500 hover:text-slate-300 bg-transparent border-none cursor-pointer"
+                >
+                  New build
+                </button>
+              )}
+              <button
+                onClick={handleGenerate}
+                disabled={sending || !prompt.trim()}
+                className={`flex items-center gap-1.5 px-3 h-8 rounded-lg text-xs font-medium border-none cursor-pointer transition-all ${
+                  prompt.trim() && !sending
+                    ? "bg-gradient-to-br from-indigo-500 to-violet-700 text-white hover:opacity-90"
+                    : "bg-zinc-800 text-zinc-600"
+                } disabled:opacity-50`}
+              >
+                <FiSend size={13} /> {artifact ? "Regenerate" : "Generate"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
+}
+
+function tierColor(tier) {
+  switch (tier) {
+    case "premium": return "bg-indigo-600/20 text-indigo-300";
+    case "fast": return "bg-emerald-600/20 text-emerald-300";
+    case "budget": return "bg-amber-600/20 text-amber-300";
+    case "free": return "bg-slate-600/20 text-slate-300";
+    default: return "bg-white/10 text-slate-400";
+  }
 }
 
 function mimeFor(name = "") {

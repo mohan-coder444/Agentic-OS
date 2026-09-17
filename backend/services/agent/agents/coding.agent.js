@@ -1,4 +1,5 @@
-import { getMistral, getOpenRouterCoding, getModelForIntent, getGroq } from "../config/llm.js";
+import { getMistral, getOpenRouterCoding, getModelForIntent, getGroq, getBedrock, getBedrockForModel, getOpenRouterForModel } from "../config/llm.js";
+import { findModel } from "../config/models.js";
 
 export const codingAgent = async (state) => {
   const prompt = state.prompt || "";
@@ -60,6 +61,92 @@ FORBIDDEN:
 - Broken JavaScript that references undefined DOM ids.
 
 User request: ${prompt}`;
+
+  // ---- Explicit model requested? Try it first. ----
+  // The frontend model dropdown sends state.model (e.g. "claude-3-haiku").
+  // "auto" or absent falls through to the existing chain below.
+  //
+  // The strategy: attempt ONLY the chosen model. If it fails, fall through
+  // to the auto chain rather than surfacing the error — users typically want
+  // "generate a site" more than "generate a site using this specific model".
+  // The auto chain is the same safety net that has kept the app working
+  // through OpenRouter credit exhaustion.
+  const modelChoice = state.model && state.model !== "auto" ? findModel(state.model) : null;
+  if (modelChoice && modelChoice.provider !== "auto") {
+    console.log(`[coding] explicit model=${modelChoice.id} provider=${modelChoice.provider}`);
+    try {
+      let client = null;
+      if (modelChoice.provider === "bedrock") client = getBedrockForModel(modelChoice.modelId);
+      else if (modelChoice.provider === "openrouter") client = getOpenRouterForModel(modelChoice.modelId);
+
+      if (client) {
+        const res = await client.invoke(systemPrompt);
+        let text = (res.content || "").trim();
+        text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+        const s = text.indexOf("{"), e = text.lastIndexOf("}");
+        if (s !== -1 && e > s) text = text.slice(s, e + 1);
+        console.log(`[coding] ${modelChoice.id} raw:`, text.slice(0, 200));
+        const json = JSON.parse(text);
+        if (json.files?.length) {
+          return {
+            aiResponse: "code generated successfully",
+            artifacts: [{ id: Date.now(), type: "project", files: json.files, modelUsed: modelChoice.id }],
+          };
+        }
+      }
+      // Groq path uses a different SDK (not LangChain), so handled separately.
+      if (modelChoice.provider === "groq") {
+        const groq = getGroq();
+        if (groq) {
+          const res = await groq.chat.completions.create({
+            model: modelChoice.modelId,
+            temperature: 0.3,
+            max_tokens: 8000,
+            messages: [
+              { role: "system", content: systemPrompt.replace(/OUTPUT FORMAT[\s\S]*?\}/, "OUTPUT FORMAT (strict): Return ONLY a single ```html code block containing a complete self-contained HTML file with embedded <style> and <script>. No prose, no other text.") },
+              { role: "user", content: prompt },
+            ],
+          });
+          const content = res.choices?.[0]?.message?.content || "";
+          const match = content.match(/```html\s*([\s\S]*?)```/i) || content.match(/```\s*([\s\S]*?)```/);
+          const html = (match ? match[1] : content).trim();
+          if (html && html.length > 200) {
+            return {
+              aiResponse: "code generated successfully",
+              artifacts: [{ id: Date.now(), type: "project", files: [{ name: "index.html", content: html }], modelUsed: modelChoice.id }],
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[coding] explicit model ${modelChoice.id} failed, falling through to auto:`, e.message?.slice(0, 200));
+    }
+  }
+
+  // Try Bedrock (Claude Sonnet 4 via EU inference profile) first — highest
+  // quality on our provider chain. Uses the JSON-output pattern because
+  // Claude is very reliable at producing valid JSON when asked.
+  try {
+    const bedrock = getBedrock();
+    if (bedrock) {
+      const res = await bedrock.invoke(systemPrompt);
+      let text = (res.content || "").trim();
+      // Claude sometimes wraps in ```json fences even when told not to.
+      text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+      const s = text.indexOf("{"), e = text.lastIndexOf("}");
+      if (s !== -1 && e > s) text = text.slice(s, e + 1);
+      console.log(`[coding] Bedrock raw:`, text.slice(0, 200));
+      const json = JSON.parse(text);
+      if (json.files?.length) {
+        return {
+          aiResponse: "code generated successfully",
+          artifacts: [{ id: Date.now(), type: "project", files: json.files, modelUsed: "auto:bedrock" }],
+        };
+      }
+    }
+  } catch (e) {
+    console.warn("[coding] Bedrock failed, fallback to Zen:", e.message?.slice(0, 200));
+  }
 
   // Try OpenCode Zen (frontier) first
   try {

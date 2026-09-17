@@ -1,6 +1,7 @@
 import express from "express";
 import { runAgent, listAgents } from "../controllers/agentController.js";
 import { addDocuments, similaritySearch, listDocs } from "../vector/vectorStore.js";
+import { CODING_MODELS } from "../config/models.js";
 import upload from "../config/multer.js";
 import { PDFParse } from "pdf-parse";
 import fs from "fs";
@@ -20,6 +21,9 @@ const router = express.Router();
 
 router.get("/api", (req, res) => res.json({ message: "Hello from Agent" }));
 router.get("/agents", listAgents);
+// Exposes the curated model list for the frontend build-view dropdown.
+// Public info — no auth check. Frontend caches this on mount.
+router.get("/models", (req, res) => res.json({ models: CODING_MODELS }));
 router.post("/run", runAgent);
 
 // File upload (PDF/image) — multer diskStorage to config/temp

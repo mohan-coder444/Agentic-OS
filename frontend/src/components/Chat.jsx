@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { FiMessageSquare, FiPlus, FiPaperclip, FiMic, FiSend, FiZap, FiGlobe, FiCode, FiFileText, FiImage, FiMenu, FiX, FiTrash2, FiCpu } from "react-icons/fi";
+import { setBuilds, removeBuild, setActiveBuildId } from "../slices/builderSlice";
 import { MdOutlineCoPresent } from "react-icons/md";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -23,6 +24,7 @@ import {
 export default function Chat() {
   const dispatch = useDispatch();
   const { conversations, activeId, messages, view } = useSelector((s) => s.chat);
+  const { builds, activeBuildId } = useSelector((s) => s.builder);
   const user = useSelector((s) => s.user.userData);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -66,6 +68,14 @@ export default function Chat() {
     api
       .get("/chat/conversations")
       .then((r) => dispatch(setConversations(r.data.conversations)))
+      .catch(() => {});
+  }, [dispatch]);
+
+  // Load build sessions on mount — same pattern as conversations.
+  useEffect(() => {
+    api
+      .get("/chat/builds")
+      .then((r) => dispatch(setBuilds(r.data.builds || [])))
       .catch(() => {});
   }, [dispatch]);
 
@@ -113,6 +123,27 @@ export default function Chat() {
       } catch {
         /* if refetch also fails, the sidebar will re-hydrate on next page load */
       }
+    }
+  };
+
+  // Delete a build session. Same optimistic + refetch-on-failure pattern as
+  // handleDeleteConversation, adapted for /chat/builds.
+  const handleDeleteBuild = async (e, build) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const label = build.title || "this build";
+    if (!window.confirm(`Delete “${label}”? This cannot be undone.`)) return;
+
+    dispatch(removeBuild(build._id));
+    try {
+      await api.delete(`/chat/builds/${build._id}`);
+    } catch (err) {
+      console.error("delete build failed:", err.response?.data || err.message);
+      alert(`Delete failed: ${err.response?.data?.message || err.message}`);
+      try {
+        const r = await api.get("/chat/builds");
+        dispatch(setBuilds(r.data.builds || []));
+      } catch {}
     }
   };
 
@@ -290,23 +321,71 @@ export default function Chat() {
         )}
 
         {view === "build" && (
-          <div className="flex-1 overflow-y-auto px-4 pt-3 pb-2" style={{ scrollbarWidth: "none" }}>
-            <div className="text-[10.5px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
-              About Build
+          <>
+            <div className="px-3 pb-2">
+              <button
+                onClick={() => {
+                  dispatch(setActiveBuildId(null));
+                  setMobileOpen(false);
+                }}
+                className="w-full py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-500 transition flex items-center justify-center gap-2"
+              >
+                <FiPlus size={16} /> New build
+              </button>
             </div>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              A full IDE for AI-generated websites. Describe what you want, watch it appear in the preview, tweak with follow-up prompts, then download the code.
-            </p>
-            <div className="text-[10.5px] font-semibold uppercase tracking-widest text-slate-600 mt-6 mb-2">
-              Tips
+
+            {builds.length === 0 ? (
+              <div className="px-5 pt-4 pb-1.5 text-[10.5px] font-semibold uppercase tracking-widest text-slate-600">
+                No saved builds
+              </div>
+            ) : (
+              <div className="px-5 pt-4 pb-1.5 text-[10.5px] font-semibold uppercase tracking-widest text-slate-600">Recent builds</div>
+            )}
+
+            <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-0.5" style={{ scrollbarWidth: "none" }}>
+              {builds.map((b) => {
+                const isActive = activeBuildId === b._id;
+                const activate = () => {
+                  dispatch(setActiveBuildId(b._id));
+                  setMobileOpen(false);
+                };
+                return (
+                  <div
+                    key={b._id}
+                    onClick={activate}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        activate();
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    className={`group w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] border text-left transition-colors duration-150 cursor-pointer ${
+                      isActive ? "bg-indigo-600 border-indigo-500 text-white" : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                    }`}
+                  >
+                    <div
+                      className={`flex items-center justify-center shrink-0 w-7 h-7 rounded-lg transition-colors ${isActive ? "bg-white text-indigo-600" : "bg-zinc-800 text-zinc-400"}`}
+                    >
+                      <FiCpu size={13} />
+                    </div>
+                    <span className="text-[13px] truncate flex-1">{b.title || "Untitled build"}</span>
+                    <button
+                      onClick={(e) => handleDeleteBuild(e, b)}
+                      aria-label={`Delete build: ${b.title || "Untitled"}`}
+                      title="Delete build"
+                      className={`shrink-0 w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity duration-150 border-none bg-transparent cursor-pointer ${
+                        isActive ? "text-white/70 hover:text-white hover:bg-white/10" : "text-zinc-500 hover:text-red-400 hover:bg-white/[0.08]"
+                      }`}
+                    >
+                      <FiTrash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-            <ul className="text-xs text-slate-400 leading-relaxed space-y-1.5 list-disc pl-4">
-              <li>Be specific about audience, tone, and content sections.</li>
-              <li>Name the design language: editorial, brutalist, glassmorphism, minimal.</li>
-              <li>Use Regenerate to iterate on the same idea.</li>
-              <li>Toggle desktop / tablet / mobile in the preview toolbar.</li>
-            </ul>
-          </div>
+          </>
         )}
 
         <div className="mx-2.5 h-px bg-white/5" />

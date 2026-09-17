@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
-import { FiMessageSquare, FiPlus, FiPaperclip, FiMic, FiSend, FiZap, FiGlobe, FiCode, FiFileText, FiImage, FiMenu, FiX } from "react-icons/fi";
+import { FiMessageSquare, FiPlus, FiPaperclip, FiMic, FiSend, FiZap, FiGlobe, FiCode, FiFileText, FiImage, FiMenu, FiX, FiTrash2 } from "react-icons/fi";
 import { MdOutlineCoPresent } from "react-icons/md";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -15,6 +15,7 @@ import {
   addConversation,
   addMessages,
   updateConversationTitle,
+  removeConversation,
 } from "../slices/chatSlice";
 
 export default function Chat() {
@@ -82,6 +83,34 @@ export default function Chat() {
     } catch (e) {
       console.error("new chat failed:", e.response?.data || e.message);
       alert(`New chat failed: ${e.response?.data?.message || e.message} — please re-login (cookie SameSite was fixed to lax)`);
+    }
+  };
+
+  // Delete a conversation from the sidebar. Optimistic — we remove from Redux
+  // BEFORE the API call so the UI feels instant, then restore on failure.
+  // This is the pattern ChatGPT uses; a spinner on every delete would feel
+  // laggy for the common-case happy path.
+  const handleDeleteConversation = async (e, conversation) => {
+    e.stopPropagation(); // don't trigger the row's "switch to this convo" click
+    e.preventDefault();
+    const label = conversation.title || "this chat";
+    if (!window.confirm(`Delete “${label}”? This cannot be undone.`)) return;
+
+    // Optimistic remove
+    dispatch(removeConversation(conversation._id));
+    try {
+      await api.delete(`/chat/conversations/${conversation._id}`);
+    } catch (err) {
+      console.error("delete conversation failed:", err.response?.data || err.message);
+      alert(`Delete failed: ${err.response?.data?.message || err.message}`);
+      // Restore on failure by re-fetching the list (simpler than caching
+      // the removed conversation locally and reinserting at the right spot)
+      try {
+        const r = await api.get("/chat/conversations");
+        dispatch(setConversations(r.data.conversations));
+      } catch {
+        /* if refetch also fails, the sidebar will re-hydrate on next page load */
+      }
     }
   };
 
@@ -179,14 +208,26 @@ export default function Chat() {
         <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-0.5" style={{ scrollbarWidth: "none" }}>
           {conversations.map((c) => {
             const isActive = activeId === c._id;
+            // Row is a div, not a button, so we can nest the delete button
+            // inside it without invalid HTML (button-in-button) and without
+            // click bubbling from the delete icon triggering the row's onClick.
+            const activate = () => {
+              dispatch(setActiveId(c._id));
+              setMobileOpen(false);
+            };
             return (
-              <button
+              <div
                 key={c._id}
-                onClick={() => {
-                  dispatch(setActiveId(c._id));
-                  setMobileOpen(false);
+                onClick={activate}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    activate();
+                  }
                 }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] border text-left transition-colors duration-150 ${
+                role="button"
+                tabIndex={0}
+                className={`group w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] border text-left transition-colors duration-150 cursor-pointer ${
                   isActive ? "bg-indigo-600 border-indigo-500 text-white" : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800 hover:text-white"
                 }`}
               >
@@ -195,8 +236,18 @@ export default function Chat() {
                 >
                   <FiMessageSquare size={13} />
                 </div>
-                <span className="text-[13px] truncate">{c.title || "New chat"}</span>
-              </button>
+                <span className="text-[13px] truncate flex-1">{c.title || "New chat"}</span>
+                <button
+                  onClick={(e) => handleDeleteConversation(e, c)}
+                  aria-label={`Delete conversation: ${c.title || "New chat"}`}
+                  title="Delete conversation"
+                  className={`shrink-0 w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity duration-150 border-none bg-transparent cursor-pointer ${
+                    isActive ? "text-white/70 hover:text-white hover:bg-white/10" : "text-zinc-500 hover:text-red-400 hover:bg-white/[0.08]"
+                  }`}
+                >
+                  <FiTrash2 size={13} />
+                </button>
+              </div>
             );
           })}
         </div>

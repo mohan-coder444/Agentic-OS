@@ -43,6 +43,25 @@ export const getMessages = async (req, res) => {
   res.json({ messages });
 };
 
+// DELETE /conversations/:id — delete a conversation and all its messages
+// Also asks the agent service to clear its Redis memory cache for this convo.
+// Non-fatal if the agent call fails: DB is the source of truth, cache will
+// expire on its own (24h TTL) if the delete-cache endpoint is unreachable.
+export const deleteConversation = async (req, res) => {
+  const session = await getUserFromSession(req);
+  if (!session) return res.status(401).json({ message: "Not authenticated" });
+  const conv = await Conversation.findOne({ _id: req.params.id, userId: session.userId });
+  if (!conv) return res.status(404).json({ message: "Conversation not found" });
+
+  // Delete messages first so a partial failure leaves fewer orphans than the
+  // other order would (orphaned messages beat orphaned conversation shells
+  // because listConversations is what the sidebar actually renders).
+  await Message.deleteMany({ conversationId: conv._id });
+  await Conversation.deleteOne({ _id: conv._id });
+
+  res.json({ message: "Deleted", conversationId: conv._id });
+};
+
 // POST /conversations/:id/messages — add user message (and stub assistant reply)
 // If x-from-agent header is present, only save user msg (agent will handle assistant via LLM)
 export const addMessage = async (req, res) => {

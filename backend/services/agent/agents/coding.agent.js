@@ -36,11 +36,20 @@ export const codingAgent = async (state) => {
   //
   // If the user attached a PDF or PPTX in the Build view, `state.extractedText`
   // holds its content. We inject it as REFERENCE MATERIAL so the agent grounds
-  // the site in real content from the doc (brand names, product descriptions,
-  // talking points from a pitch deck etc.) instead of inventing generic copy.
+  // the site in real content from the doc (resume details, brand names,
+  // product descriptions, talking points from a pitch deck) instead of
+  // inventing generic copy.
+  //
+  // The wording is deliberately strict — earlier versions used softer
+  // language ("use it to ground") and models happily ignored it. This
+  // version is imperative and explicit about what "use" means.
   const referenceBlock = state.extractedText
-    ? `\n\nREFERENCE MATERIAL (the user attached this file — use it to ground the site's content, brand voice, product details, and copy. Do NOT invent things that contradict this):\n"""\n${state.extractedText.slice(0, 12000)}\n"""\n`
+    ? `\n\n=== REFERENCE MATERIAL (user attached a file) ===\nThis is the user's actual document. The generated site MUST use its real content: real names, real dates, real employers, real projects, real skills, real descriptions. DO NOT invent or replace ANY of these facts. If the doc is a resume, the portfolio site MUST include every job, every project, every skill mentioned. If it's a pitch deck, the site MUST use the deck's product name, features, and copy verbatim. Ignoring this material is a bug.\n\nDOCUMENT CONTENT:\n"""\n${state.extractedText.slice(0, 15000)}\n"""\n=== END REFERENCE MATERIAL ===\n`
     : "";
+
+  if (state.extractedText) {
+    console.log(`[coding] reference material attached: ${state.extractedText.length} chars`);
+  }
 
   const systemPrompt = `You are Cortex AI, a senior frontend engineer + designer that ships production-quality single-page websites.
 
@@ -203,6 +212,11 @@ User request: ${prompt}`;
   // Fallback to Mistral (old behavior) — wrap as single file artifact.
   // NOTE: OpenCode Zen needs billing, OpenRouter DeepSeek needs credits.
   // Mistral has a free tier that works, so it's the reliable backstop.
+  //
+  // Uses the full systemPrompt (which includes referenceBlock) rather than a
+  // hardcoded string. The previous version had a hardcoded system message
+  // that ignored attached resumes/decks entirely — users complained the site
+  // had zero details from their doc. That was the bug.
   try {
     const { getMistral } = await import("../config/llm.js");
     const mistral = getMistral();
@@ -210,7 +224,12 @@ User request: ${prompt}`;
       const res = await mistral.chat.complete({
         model: "mistral-small-latest",
         messages: [
-          { role: "system", content: "You are Cortex AI, a senior frontend engineer + designer. Generate a COMPLETE, runnable SINGLE HTML file with embedded <style> and <script>. Follow every rule: real content (NO lorem ipsum), Google Fonts, distinctive design language (not generic), full page (nav + hero + 3+ sections + footer), scroll-reveal via IntersectionObserver, responsive, semantic HTML5. Wrap in \`\`\`html code block." },
+          {
+            role: "system",
+            content:
+              systemPrompt +
+              "\n\nOUTPUT OVERRIDE for this call: instead of the JSON format above, output ONE complete runnable HTML file with embedded <style> and <script>, wrapped in a ```html code block. Nothing before or after the fence.",
+          },
           { role: "user", content: prompt },
         ],
         maxTokens: 8000,
@@ -237,6 +256,11 @@ User request: ${prompt}`;
   // with embedded HTML/CSS/JS strings is fragile — one unescaped quote in
   // the content and JSON.parse throws "Unterminated string". Code fences
   // are far more robust: just find the opening ```html and closing ```.
+  //
+  // CRITICAL: uses the full systemPrompt (with referenceBlock) rather than a
+  // hardcoded message. Groq is the current end of the chain on the free
+  // tier, so this is the one that actually runs for most users. If this
+  // ignores attachments, every request ignores attachments.
   try {
     const groq = getGroq();
     if (groq) {
@@ -247,7 +271,9 @@ User request: ${prompt}`;
         messages: [
           {
             role: "system",
-            content: "You are Cortex AI, a senior frontend engineer + designer. Generate ONE complete, runnable HTML file with embedded <style> and <script>. STRICT RULES: real content (invent brand names, real testimonials, no lorem ipsum), Google Fonts via <link>, distinctive design language (dark editorial / glassmorphism / brutalist / minimal — never generic Bootstrap), full page (nav + hero + at least 3 sections + footer), scroll-reveal via IntersectionObserver, mobile-responsive down to 375px, semantic HTML5 (<nav>, <main>, <section>, <footer>). Output ONLY the HTML wrapped in a ```html code block. Nothing before or after.",
+            content:
+              systemPrompt +
+              "\n\nOUTPUT OVERRIDE for this call: instead of the JSON format above, output ONE complete runnable HTML file with embedded <style> and <script>, wrapped in a ```html code block. Nothing before or after the fence.",
           },
           { role: "user", content: prompt },
         ],

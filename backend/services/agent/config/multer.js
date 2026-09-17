@@ -15,11 +15,19 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
 
+// Accepted MIME types keyed by file category. Anything outside this list is
+// rejected at multipart parse time — saves us from having to reject later.
+const ACCEPTED = {
+  "application/pdf": "pdf",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.ms-powerpoint": "ppt", // legacy .ppt; extraction may fail but we accept the upload
+};
+
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype === "application/pdf" || file.mimetype.startsWith("image/")) {
+  if (ACCEPTED[file.mimetype] || file.mimetype.startsWith("image/")) {
     cb(null, true);
   } else {
-    cb(new Error("Only PDF or image allowed"), false);
+    cb(new Error(`Unsupported type: ${file.mimetype}. Allowed: PDF, PPTX, image.`), false);
   }
 };
 

@@ -19,7 +19,7 @@ async function getUser(req) {
 export const runAgent = async (req, res) => {
   const user = await getUser(req);
   if (!user) return res.status(401).json({ message: "Not authenticated" });
-  const { prompt, conversationId, agent, fileName, fileType, model } = req.body;
+  const { prompt, conversationId, agent, fileName, fileType, model, extractedText } = req.body;
   if (!prompt) return res.status(400).json({ message: "prompt is required" });
   // Rate limit on the requested agent. "auto" falls into the chat bucket —
   // generous (20/min) and avoids charging users for routing decisions.
@@ -53,7 +53,7 @@ export const runAgent = async (req, res) => {
     }
     const history = conversationId ? await getMemory(conversationId, user.userId) : [];
     console.log(`[agent] history len=${history.length} agent=${agent || "auto"} conv ${conversationId} file=${fileName || "-"}`);
-    const result = await graph.invoke({ prompt, history, conversationId, agent: agent?.toLowerCase(), fileName, fileType, model, userId: user.userId });
+    const result = await graph.invoke({ prompt, history, conversationId, agent: agent?.toLowerCase(), fileName, fileType, model, extractedText, userId: user.userId });
 
     // Auto-save Build sessions. Trigger: coding agent + artifacts produced +
     // NO conversationId (means the request came from the Build view, not the

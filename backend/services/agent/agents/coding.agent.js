@@ -33,6 +33,15 @@ export const codingAgent = async (state) => {
   // Code generation — return JSON with files. The system prompt below is the
   // single biggest lever between "generic bootstrap-looking site" and something
   // that looks like it belongs in an award-nomination. Every line is load-bearing.
+  //
+  // If the user attached a PDF or PPTX in the Build view, `state.extractedText`
+  // holds its content. We inject it as REFERENCE MATERIAL so the agent grounds
+  // the site in real content from the doc (brand names, product descriptions,
+  // talking points from a pitch deck etc.) instead of inventing generic copy.
+  const referenceBlock = state.extractedText
+    ? `\n\nREFERENCE MATERIAL (the user attached this file — use it to ground the site's content, brand voice, product details, and copy. Do NOT invent things that contradict this):\n"""\n${state.extractedText.slice(0, 12000)}\n"""\n`
+    : "";
+
   const systemPrompt = `You are Cortex AI, a senior frontend engineer + designer that ships production-quality single-page websites.
 
 OUTPUT FORMAT (strict): Return ONLY valid JSON. No prose, no markdown fences.
@@ -58,7 +67,7 @@ FORBIDDEN:
 - Lorem ipsum, 'placeholder' text, 'Company Name', 'Feature 1', generic 'card' components with no purpose.
 - Empty <div> content. Every section must MEAN something.
 - Loading a CSS framework CDN (Tailwind CDN, Bootstrap, etc.). Write real CSS.
-- Broken JavaScript that references undefined DOM ids.
+- Broken JavaScript that references undefined DOM ids.${referenceBlock}
 
 User request: ${prompt}`;
 

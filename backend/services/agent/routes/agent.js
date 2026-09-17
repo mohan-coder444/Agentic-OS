@@ -2,9 +2,8 @@ import express from "express";
 import { runAgent, listAgents } from "../controllers/agentController.js";
 import { addDocuments, similaritySearch, listDocs } from "../vector/vectorStore.js";
 import { CODING_MODELS } from "../config/models.js";
+import { extractPdfText, extractPptxText } from "../utils/extractText.js";
 import upload from "../config/multer.js";
-import { PDFParse } from "pdf-parse";
-import fs from "fs";
 import path from "path";
 import { uploadDir } from "../config/multer.js";
 import jwt from "jsonwebtoken";
@@ -26,20 +25,31 @@ router.get("/agents", listAgents);
 router.get("/models", (req, res) => res.json({ models: CODING_MODELS }));
 router.post("/run", runAgent);
 
-// File upload (PDF/image) — multer diskStorage to config/temp
+// File upload (PDF/PPTX/image) — multer diskStorage to config/temp
 router.post("/upload", upload.single("file"), async (req, res) => {
   const user = await getUser(req);
   if (!user) return res.status(401).json({ message: "Not authenticated" });
-  if (!req.file) return res.status(400).json({ message: "file required (PDF or image)" });
+  if (!req.file) return res.status(400).json({ message: "file required (PDF, PPTX, or image)" });
   const storedName = req.file.filename;
-  const fileType = req.file.mimetype === "application/pdf" ? "pdf" : "image";
+  const filePath = path.join(uploadDir, storedName);
+  const mime = req.file.mimetype;
+
+  // fileType categorizes the upload for downstream agents. `reference`
+  // means "the coding agent should read the extracted text as context"
+  // — used for PPTX and PDFs attached in the Build view.
+  let fileType = "image";
+  if (mime === "application/pdf") fileType = "pdf";
+  else if (mime.includes("presentation") || mime === "application/vnd.ms-powerpoint") fileType = "pptx";
+
   let chunks = 0;
-  // PDF: extract text, chunk (~1000 chars), store in Vector DB for RAG
+  let extractedText = "";
+
+  // PDF: extract text, chunk (~1000 chars), store in Vector DB for RAG,
+  // AND return the full text so the Build view can pass it as context.
   if (fileType === "pdf") {
     try {
-      const parser = new PDFParse({ data: fs.readFileSync(path.join(uploadDir, storedName)) });
-      const data = await parser.getText();
-      const text = (data.text || "").replace(/\s+/g, " ").trim();
+      const text = await extractPdfText(filePath);
+      extractedText = text;
       const docs = [];
       for (let i = 0; i < text.length; i += 1000) {
         const chunk = text.slice(i, i + 1000);
@@ -51,7 +61,28 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       console.warn("pdf extract failed:", e.message);
     }
   }
-  res.json({ fileName: storedName, originalName: req.file.originalname, fileType, chunks });
+
+  // PPTX: extract slide text so the coding agent can reference the deck's
+  // content. Not stored in the vector DB — Build view uses it as inline
+  // context, not for RAG search. Cap at 20k chars to protect LLM token budgets.
+  if (fileType === "pptx") {
+    try {
+      const text = await extractPptxText(filePath);
+      extractedText = text.slice(0, 20000);
+    } catch (e) {
+      console.warn("pptx extract failed:", e.message);
+    }
+  }
+
+  res.json({
+    fileName: storedName,
+    originalName: req.file.originalname,
+    fileType,
+    chunks,
+    // Only returned for pdf/pptx. Frontend passes this back on /agent/run so
+    // the coding agent can include it verbatim in the prompt.
+    ...(extractedText ? { extractedText } : {}),
+  });
 });
 
 // Vector DB ingest — Hour 9+ RAG

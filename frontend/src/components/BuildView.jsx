@@ -13,6 +13,9 @@ import {
   FiSmartphone,
   FiTablet,
   FiChevronDown,
+  FiPaperclip,
+  FiFileText,
+  FiX,
 } from "react-icons/fi";
 import api from "../axios";
 import LoadingAnimation from "./LoadingAnimation";
@@ -45,8 +48,13 @@ export default function BuildView() {
   const [device, setDevice] = useState("desktop");
   const [previewKey, setPreviewKey] = useState(0);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  // Attached reference file (PDF or PPTX). Its extracted text gets injected
+  // into the coding agent's prompt as REFERENCE MATERIAL so the site grounds
+  // in real content from the deck/document instead of inventing generic copy.
+  const [attachedFile, setAttachedFile] = useState(null);
   const inputRef = useRef(null);
   const modelMenuRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // The active artifact comes from the cache. `null` means empty state.
   const artifact = activeBuildId ? buildsById[activeBuildId] : null;
@@ -108,16 +116,53 @@ export default function BuildView() {
 
   const currentModel = models.find((m) => m.id === selectedModel) || models[0];
 
+  const clearAttachedFile = () => {
+    setAttachedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleUpload = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    // Show the chip immediately so the user sees the upload is in flight.
+    setAttachedFile({ name: f.name, size: f.size, type: f.type, uploading: true });
+    try {
+      const form = new FormData();
+      form.append("file", f);
+      const res = await api.post("/agent/upload", form);
+      const { fileName, fileType, extractedText } = res.data;
+      if (!extractedText && fileType !== "image") {
+        alert("Could not extract text from that file. The build will still work but without reference material.");
+      }
+      setAttachedFile({
+        name: f.name,
+        size: f.size,
+        type: f.type,
+        fileName,
+        fileType,
+        extractedText: extractedText || "",
+      });
+    } catch (err) {
+      const msg = err.response?.data?.message || err.message;
+      alert(`Upload failed: ${msg}`);
+      clearAttachedFile();
+    }
+  };
+
   const handleGenerate = async () => {
     if (!prompt.trim() || sending) return;
     const request = prompt.trim();
+    const ref = attachedFile?.extractedText;
+    const refName = attachedFile?.name;
     setPrompt("");
+    clearAttachedFile();
     setSending(true);
     try {
       const res = await api.post("/agent/run", {
         prompt: request,
         agent: "coding",
         model: selectedModel,
+        ...(ref ? { extractedText: ref, fileName: refName } : {}),
       });
       const gen = res.data.artifacts?.[0];
       const buildId = res.data.buildId;
@@ -414,6 +459,39 @@ export default function BuildView() {
           )}
         </AnimatePresence>
         <div className="p-3 rounded-2xl bg-zinc-900 border border-zinc-800 flex flex-col gap-2">
+          {/* Attached file chip — PDF/PPTX icon + name + size + clear.
+              Extracted text is passed as REFERENCE MATERIAL to the coding
+              agent on generate. Chip persists across regenerations until
+              the user removes it — lets them iterate multiple site variants
+              from the same deck. */}
+          {attachedFile && (
+            <div className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl bg-white/[0.04] border border-white/10">
+              <FiFileText
+                size={18}
+                className={
+                  attachedFile.fileType === "pptx"
+                    ? "text-amber-500 shrink-0"
+                    : "text-red-500 shrink-0"
+                }
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-slate-200 truncate">{attachedFile.name}</p>
+                <p className="text-[10px] text-slate-500">
+                  {attachedFile.uploading
+                    ? "Extracting text..."
+                    : `${Math.ceil((attachedFile.size || 0) / 1024)} KB · ${attachedFile.extractedText?.length || 0} chars extracted`}
+                </p>
+              </div>
+              <button
+                onClick={clearAttachedFile}
+                aria-label="Remove attached file"
+                title="Remove attached file"
+                className="ml-2 w-7 h-7 rounded-lg flex items-center justify-center text-slate-500 hover:text-white hover:bg-white/[0.08] transition-colors duration-150 bg-transparent border-none cursor-pointer shrink-0"
+              >
+                <FiX size={14} />
+              </button>
+            </div>
+          )}
           <textarea
             ref={inputRef}
             value={prompt}
@@ -435,9 +513,30 @@ export default function BuildView() {
             style={{ scrollbarWidth: "none" }}
           />
           <div className="flex items-center justify-between">
-            <span className="text-[10px] text-slate-500">
-              Model: <span className="text-slate-300">{currentModel?.label || "Auto"}</span>
-            </span>
+            <div className="flex items-center gap-2">
+              {/* Paperclip — attach PDF or PPTX as reference material.
+                  Backend extracts text server-side and returns it. Frontend
+                  passes that text back on /agent/run so the coding agent
+                  can ground the site in the doc's real content. */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.pptx,.ppt,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-powerpoint"
+                className="hidden"
+                onChange={handleUpload}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach PDF or PPTX as reference"
+                aria-label="Attach PDF or PPTX as reference"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 border border-transparent hover:border-white/10 transition-all cursor-pointer bg-white/[0.04]"
+              >
+                <FiPaperclip size={14} />
+              </button>
+              <span className="text-[10px] text-slate-500">
+                Model: <span className="text-slate-300">{currentModel?.label || "Auto"}</span>
+              </span>
+            </div>
             <div className="flex items-center gap-2">
               {artifact && (
                 <button

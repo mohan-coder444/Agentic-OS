@@ -24,8 +24,12 @@ export function getOpenRouterCoding() {
   if (!openRouterCoding && process.env.OPENROUTER_API_KEY) {
     openRouterCoding = new ChatOpenAI({
       model: "deepseek/deepseek-chat",
-      temperature: 0,
-      maxTokens: 1500,
+      temperature: 0.2,
+      // Capped to fit remaining OpenRouter free-tier credits. Bump when you
+      // top up: `CODING_MAX_TOKENS=8000` in the agent env for full sites.
+      // OpenRouter checks maxTokens against your BALANCE, not usage — asking
+      // for more than you can afford 402s even if the actual output is short.
+      maxTokens: Number(process.env.CODING_MAX_TOKENS) || 1000,
       apiKey: process.env.OPENROUTER_API_KEY,
       configuration: { baseURL: "https://openrouter.ai/api/v1" },
     });
@@ -38,8 +42,8 @@ export function getOpenCodeZen() {
   if (!openCodeZen && process.env.OPENCODE_ZEN_API_KEY) {
     openCodeZen = new ChatOpenAI({
       model: process.env.OPENCODE_ZEN_MODEL || "gpt-5.3-codex",
-      temperature: 0,
-      maxTokens: 3000,
+      temperature: 0.2,
+      maxTokens: 8000,
       apiKey: process.env.OPENCODE_ZEN_API_KEY,
       configuration: { baseURL: process.env.OPENCODE_ZEN_BASE_URL || "https://opencode.ai/zen/v1" },
     });

@@ -7,6 +7,9 @@ const chatSlice = createSlice({
     activeId: null,
     messages: {}, // { [conversationId]: [{_id, role, content}] }
     loading: false,
+    // Which sidebar section is active. "chats" shows conversation list + chat UI.
+    // "build" shows the IDE-style website builder view.
+    view: "chats",
   },
   reducers: {
     setConversations: (state, action) => {
@@ -45,9 +48,12 @@ const chatSlice = createSlice({
       if (state.activeId === id) state.activeId = null;
       delete state.messages[id];
     },
+    setView: (state, action) => {
+      state.view = action.payload;
+    },
   },
 });
 
-export const { setConversations, setActiveId, setMessages, addConversation, addMessages, updateConversationTitle, removeConversation } =
+export const { setConversations, setActiveId, setMessages, addConversation, addMessages, updateConversationTitle, removeConversation, setView } =
   chatSlice.actions;
 export default chatSlice.reducer;

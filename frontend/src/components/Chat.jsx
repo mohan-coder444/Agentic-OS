@@ -1,12 +1,13 @@
 import { useEffect, useState, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
-import { FiMessageSquare, FiPlus, FiPaperclip, FiMic, FiSend, FiZap, FiGlobe, FiCode, FiFileText, FiImage, FiMenu, FiX, FiTrash2 } from "react-icons/fi";
+import { FiMessageSquare, FiPlus, FiPaperclip, FiMic, FiSend, FiZap, FiGlobe, FiCode, FiFileText, FiImage, FiMenu, FiX, FiTrash2, FiCpu } from "react-icons/fi";
 import { MdOutlineCoPresent } from "react-icons/md";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import CodePreview from "./CodePreview";
 import ArtifactPanel from "./ArtifactPanel";
 import LoadingAnimation from "./LoadingAnimation";
+import BuildView from "./BuildView";
 import api from "../axios";
 import {
   setConversations,
@@ -16,11 +17,12 @@ import {
   addMessages,
   updateConversationTitle,
   removeConversation,
+  setView,
 } from "../slices/chatSlice";
 
 export default function Chat() {
   const dispatch = useDispatch();
-  const { conversations, activeId, messages } = useSelector((s) => s.chat);
+  const { conversations, activeId, messages, view } = useSelector((s) => s.chat);
   const user = useSelector((s) => s.user.userData);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -171,13 +173,15 @@ export default function Chat() {
         <div className="p-3 flex items-center justify-between">
           <span className="font-bold text-white">AgenticOS</span>
           <div className="flex items-center gap-1">
-            <button
-              onClick={handleNewChat}
-              title="New chat"
-              className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white transition"
-            >
-              <FiPlus size={16} />
-            </button>
+            {view === "chats" && (
+              <button
+                onClick={handleNewChat}
+                title="New chat"
+                className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white transition"
+              >
+                <FiPlus size={16} />
+              </button>
+            )}
             <button
               onClick={() => setMobileOpen(false)}
               aria-label="Close sidebar"
@@ -188,69 +192,122 @@ export default function Chat() {
             </button>
           </div>
         </div>
-        <div className="px-3 pb-2">
-          <button
-            onClick={handleNewChat}
-            className="w-full py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-500 transition flex items-center justify-center gap-2"
-          >
-            <FiPlus size={16} /> New chat
-          </button>
-        </div>
 
-        {conversations.length === 0 ? (
-          <div className="px-5 pt-4 pb-1.5 text-[10.5px] font-semibold uppercase tracking-widest text-slate-600">
-            No recent conversations
-          </div>
-        ) : (
-          <div className="px-5 pt-4 pb-1.5 text-[10.5px] font-semibold uppercase tracking-widest text-slate-600">Recent</div>
-        )}
-
-        <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-0.5" style={{ scrollbarWidth: "none" }}>
-          {conversations.map((c) => {
-            const isActive = activeId === c._id;
-            // Row is a div, not a button, so we can nest the delete button
-            // inside it without invalid HTML (button-in-button) and without
-            // click bubbling from the delete icon triggering the row's onClick.
-            const activate = () => {
-              dispatch(setActiveId(c._id));
-              setMobileOpen(false);
-            };
+        {/* Menu bar — view switcher. Each tab persists via Redux so switching
+            back doesn't reset state, and mobile closes the drawer after tap. */}
+        <div className="px-2.5 pb-2 flex items-center gap-1">
+          {[
+            { id: "chats", label: "Chats", icon: FiMessageSquare },
+            { id: "build", label: "Build", icon: FiCpu },
+          ].map((v) => {
+            const Icon = v.icon;
+            const isActive = view === v.id;
             return (
-              <div
-                key={c._id}
-                onClick={activate}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    activate();
-                  }
+              <button
+                key={v.id}
+                onClick={() => {
+                  dispatch(setView(v.id));
+                  setMobileOpen(false);
                 }}
-                role="button"
-                tabIndex={0}
-                className={`group w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] border text-left transition-colors duration-150 cursor-pointer ${
-                  isActive ? "bg-indigo-600 border-indigo-500 text-white" : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors duration-150 cursor-pointer ${
+                  isActive
+                    ? "bg-indigo-600 border-indigo-500 text-white"
+                    : "bg-transparent border-white/5 text-slate-400 hover:bg-white/[0.05] hover:text-slate-200"
                 }`}
               >
-                <div
-                  className={`flex items-center justify-center shrink-0 w-7 h-7 rounded-lg transition-colors ${isActive ? "bg-white text-indigo-600" : "bg-zinc-800 text-zinc-400"}`}
-                >
-                  <FiMessageSquare size={13} />
-                </div>
-                <span className="text-[13px] truncate flex-1">{c.title || "New chat"}</span>
-                <button
-                  onClick={(e) => handleDeleteConversation(e, c)}
-                  aria-label={`Delete conversation: ${c.title || "New chat"}`}
-                  title="Delete conversation"
-                  className={`shrink-0 w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity duration-150 border-none bg-transparent cursor-pointer ${
-                    isActive ? "text-white/70 hover:text-white hover:bg-white/10" : "text-zinc-500 hover:text-red-400 hover:bg-white/[0.08]"
-                  }`}
-                >
-                  <FiTrash2 size={13} />
-                </button>
-              </div>
+                <Icon size={13} /> {v.label}
+              </button>
             );
           })}
         </div>
+
+        {view === "chats" && (
+          <>
+            <div className="px-3 pb-2">
+              <button
+                onClick={handleNewChat}
+                className="w-full py-2.5 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-500 transition flex items-center justify-center gap-2"
+              >
+                <FiPlus size={16} /> New chat
+              </button>
+            </div>
+
+            {conversations.length === 0 ? (
+              <div className="px-5 pt-4 pb-1.5 text-[10.5px] font-semibold uppercase tracking-widest text-slate-600">
+                No recent conversations
+              </div>
+            ) : (
+              <div className="px-5 pt-4 pb-1.5 text-[10.5px] font-semibold uppercase tracking-widest text-slate-600">Recent</div>
+            )}
+
+            <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-0.5" style={{ scrollbarWidth: "none" }}>
+              {conversations.map((c) => {
+                const isActive = activeId === c._id;
+                // Row is a div, not a button, so we can nest the delete button
+                // inside it without invalid HTML (button-in-button) and without
+                // click bubbling from the delete icon triggering the row's onClick.
+                const activate = () => {
+                  dispatch(setActiveId(c._id));
+                  setMobileOpen(false);
+                };
+                return (
+                  <div
+                    key={c._id}
+                    onClick={activate}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        activate();
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    className={`group w-full flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] border text-left transition-colors duration-150 cursor-pointer ${
+                      isActive ? "bg-indigo-600 border-indigo-500 text-white" : "bg-transparent border-transparent text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                    }`}
+                  >
+                    <div
+                      className={`flex items-center justify-center shrink-0 w-7 h-7 rounded-lg transition-colors ${isActive ? "bg-white text-indigo-600" : "bg-zinc-800 text-zinc-400"}`}
+                    >
+                      <FiMessageSquare size={13} />
+                    </div>
+                    <span className="text-[13px] truncate flex-1">{c.title || "New chat"}</span>
+                    <button
+                      onClick={(e) => handleDeleteConversation(e, c)}
+                      aria-label={`Delete conversation: ${c.title || "New chat"}`}
+                      title="Delete conversation"
+                      className={`shrink-0 w-6 h-6 rounded flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity duration-150 border-none bg-transparent cursor-pointer ${
+                        isActive ? "text-white/70 hover:text-white hover:bg-white/10" : "text-zinc-500 hover:text-red-400 hover:bg-white/[0.08]"
+                      }`}
+                    >
+                      <FiTrash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {view === "build" && (
+          <div className="flex-1 overflow-y-auto px-4 pt-3 pb-2" style={{ scrollbarWidth: "none" }}>
+            <div className="text-[10.5px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
+              About Build
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              A full IDE for AI-generated websites. Describe what you want, watch it appear in the preview, tweak with follow-up prompts, then download the code.
+            </p>
+            <div className="text-[10.5px] font-semibold uppercase tracking-widest text-slate-600 mt-6 mb-2">
+              Tips
+            </div>
+            <ul className="text-xs text-slate-400 leading-relaxed space-y-1.5 list-disc pl-4">
+              <li>Be specific about audience, tone, and content sections.</li>
+              <li>Name the design language: editorial, brutalist, glassmorphism, minimal.</li>
+              <li>Use Regenerate to iterate on the same idea.</li>
+              <li>Toggle desktop / tablet / mobile in the preview toolbar.</li>
+            </ul>
+          </div>
+        )}
 
         <div className="mx-2.5 h-px bg-white/5" />
         <div className="px-3.5 py-3.5">
@@ -288,7 +345,9 @@ export default function Chat() {
           </button>
           <span className="text-xs font-semibold text-slate-400 truncate">AgenticOS</span>
         </div>
-        {!activeId ? (
+        {view === "build" ? (
+          <BuildView />
+        ) : !activeId ? (
           <div className="flex-1 flex items-center justify-center text-zinc-500">
             <div className="text-center">
               <p className="text-lg">Select or create a conversation</p>
